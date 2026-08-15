@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pw-stream-memory"
+version = "0.1.0"
+description = "Ncurses editor for PipeWire / WirePlumber per-app stream restore."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [
+    { name = "Florian Schüller", email = "florian@schueller.pro" },
+]
+keywords = [
+    "pipewire",
+    "wireplumber",
+    "pulseaudio",
+    "audio",
+    "ncurses",
+    "stream-restore",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console :: Curses",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+# Runtime: stdlib only (curses). System tools: pactl, wpctl, optional pw-cli.
+
+[project.scripts]
+pw-stream-memory = "pw_stream_memory:main"
+
+[project.urls]
+# Set these to your GitHub repo after it exists:
+Homepage = "https://github.com/schuellerf/pw-stream-memory"
+Issues = "https://github.com/schuellerf/pw-stream-memory/issues"
+
+[project.optional-dependencies]
+dev = ["build", "twine"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pw_stream_memory"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/.github",
+    "/wp-hook",
+    "/__pycache__",
+]
