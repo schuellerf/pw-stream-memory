@@ -1654,7 +1654,10 @@ class Tui:
             self.scroll = max(0, min(self.scroll, max_scroll))
 
             stdscr.erase()
-            title = " pw-stream-memory   q quit   ↑↓ select   Enter edit   PgUp/PgDn  g/G "
+            title = (
+                f" pw-stream-memory  debounce {debounce_on_ms():.0f}ms/{debounce_off_s():.0f}s"
+                "   q quit   ↑↓ select   Enter edit   PgUp/PgDn  g/G "
+            )
             _add(stdscr, 0, 0, title.ljust(max(w, 1)), w, header_attr)
 
             gap = 2

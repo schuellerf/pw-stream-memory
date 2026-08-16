@@ -74,8 +74,10 @@ PYTHONPATH=src python3 -m pw_stream_memory
 ```
 
 ```
-pw-stream-memory   q quit   ↑↓ select   Enter edit
+pw-stream-memory  debounce 500ms/30s   q quit   ↑↓ select   Enter edit
 ```
+
+The title bar shows the live debounce timings (`PW_STREAM_MEMORY_DEBOUNCE_ON` ms, then `PW_STREAM_MEMORY_DEBOUNCE_OFF` seconds) so you can confirm env overrides took effect.
 
 Closed streams are oldest-first at the top; active streams stay at the bottom.
 
