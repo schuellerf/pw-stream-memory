@@ -111,12 +111,7 @@ def xdg_state_root() -> Path:
 
 
 def _app_state_file(name: str) -> Path:
-    """Return a state file under pw-stream-memory, or kde_sound_overrider if that is all that exists."""
-    current = xdg_state_root() / "pw-stream-memory" / name
-    previous = xdg_state_root() / "kde_sound_overrider" / name
-    if not current.is_file() and previous.is_file():
-        return previous
-    return current
+    return xdg_state_root() / "pw-stream-memory" / name
 
 
 def default_history_path() -> Path:
@@ -135,10 +130,6 @@ def default_overrides_path() -> Path:
     return _app_state_file("overrides.json")
 
 
-def canonical_overrides_path() -> Path:
-    return xdg_state_root() / "pw-stream-memory" / "overrides.json"
-
-
 def wireplumber_sidecar_state_path() -> Path:
     return xdg_state_root() / "wireplumber" / WP_SIDECAR_STATE_NAME
 
@@ -150,19 +141,11 @@ def lua_hook_install_paths() -> tuple[Path, Path]:
 
 
 def debounce_on_ms() -> float:
-    return _env_float(
-        "PW_STREAM_MEMORY_DEBOUNCE_ON",
-        "SOUND_OVERRIDER_DEBOUNCE_ON",
-        default=DEFAULT_DEBOUNCE_ON_MS,
-    )
+    return _env_float("PW_STREAM_MEMORY_DEBOUNCE_ON", default=DEFAULT_DEBOUNCE_ON_MS)
 
 
 def debounce_off_s() -> float:
-    return _env_float(
-        "PW_STREAM_MEMORY_DEBOUNCE_OFF",
-        "SOUND_OVERRIDER_DEBOUNCE_OFF",
-        default=DEFAULT_DEBOUNCE_OFF_S,
-    )
+    return _env_float("PW_STREAM_MEMORY_DEBOUNCE_OFF", default=DEFAULT_DEBOUNCE_OFF_S)
 
 
 def _env_float(*names: str, default: float) -> float:
@@ -635,7 +618,7 @@ def load_overrides(path: Path | None = None) -> list[dict[str, Any]]:
 def save_overrides(items: list[dict[str, Any]]) -> None:
     payload = {"version": OVERRIDES_VERSION, "overrides": items}
     atomic_write_text(
-        canonical_overrides_path(),
+        default_overrides_path(),
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
     )
     # JSON for the TUI; Wp.State copy for the Lua hook.
@@ -2220,7 +2203,7 @@ def install_lua_hook() -> int:
     script_dest, conf_dest = lua_hook_install_paths()
     _copy_pkg_data(LUA_HOOK_SCRIPT, script_dest)
     _copy_pkg_data(LUA_HOOK_CONF, conf_dest)
-    if default_overrides_path().is_file() or canonical_overrides_path().is_file():
+    if default_overrides_path().is_file():
         save_overrides(load_overrides())
     print("Lua hook files installed.")
     _print_wp_restart_hint()

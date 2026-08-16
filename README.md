@@ -162,8 +162,6 @@ When an identity has debounce on and a **new** stream appears:
 After that it waits for the PipeWire node to go idle/suspended, then `running`
 (or uncork) to start the cycle again. Debounce only runs while this UI is open.
 
-The old names `SOUND_OVERRIDER_DEBOUNCE_ON` / `_OFF` still work as aliases.
-
 ## Files
 
 | Path | What |
@@ -176,9 +174,6 @@ The old names `SOUND_OVERRIDER_DEBOUNCE_ON` / `_OFF` still work as aliases.
 | `~/.local/share/wireplumber/scripts/pw-stream-memory.lua` | optional Lua hook (after `--install-lua-hook`) |
 | `~/.config/wireplumber/wireplumber.conf.d/99-pw-stream-memory.conf` | optional WirePlumber drop-in |
 | `~/.local/state/wireplumber/stream-properties` | WirePlumber restore database |
-
-If `~/.local/state/pw-stream-memory/` has no file yet, history, debounce, and
-sidecar overrides still load from `~/.local/state/kde_sound_overrider/`.
 
 ## Releasing to PyPI
 
