@@ -93,19 +93,28 @@ Closed streams are oldest-first at the top; active streams stay at the bottom.
 
 - **Match by** — WirePlumber identity (`media.role`, `application.id`,
   `application.name`, `media.name`, `node.name`). Stock WirePlumber restores
-  only its default key (first of those that is set).
+  only its default key (first of those that is set). If the stream has
+  `application.process.binary` (Slack, Cursor, other Electron apps), that is
+  offered as an extra **Lua sidecar** identity. It is never WirePlumber’s
+  default key.
 - **Volume** — 0–150%, same cubic percent as Pulse/KDE. Stored as linear
-  `channelVolumes` in WirePlumber.
+  `channelVolumes` in WirePlumber (or in the Lua sidecar for Match-by-binary).
 - **Sink** — pin to a device, or **default (no pin)** if you never chose one
 - **Mute**
 - **Debounce** — per identity, see below
-- **WP restore** — shows whether `stream-properties` already has an entry
-- **d / Del** — confirm, delete that restore entry, leave the editor
-- **Enter** — save; **Esc** — cancel
+- **WP restore** — for native keys, whether `stream-properties` already has an
+  entry
+- **Lua sidecar** — for Match-by-binary: whether the optional hook is running,
+  installed but not loaded, or missing
+- **d / Del** — confirm, delete that restore entry (WP file or Lua sidecar),
+  leave the editor
+- **Enter** — save; **Esc** — cancel. Match-by-binary save is refused until the
+  Lua hook is running.
 
 ### Native WirePlumber save
 
-Saves go through WirePlumber’s own file, not a side-car hook:
+Saves of WirePlumber’s own identity keys go through WirePlumber’s file, not a
+side-car hook:
 
 1. disable `node.stream.restore-props` and `node.stream.restore-target`
 2. wait for a pending WP flush (mtime, or 1s)
@@ -115,6 +124,33 @@ Saves go through WirePlumber’s own file, not a side-car hook:
 Runtime `wpctl settings` only — no `--save`. A progress screen shows `1/4` …
 `4/4`. If the stream is still live, volume/mute/sink are also applied with
 `pactl`.
+
+### Match-by-binary (optional Lua hook)
+
+Stock WirePlumber never looks up `application.process.binary`. Slack and other
+Electron apps share `application.name=Chromium`, so a native save cannot be
+Slack-only.
+
+```bash
+pw-stream-memory --install-lua-hook
+systemctl --user restart wireplumber
+```
+
+That copies:
+
+- `~/.local/share/wireplumber/scripts/pw-stream-memory.lua`
+- `~/.config/wireplumber/wireplumber.conf.d/99-pw-stream-memory.conf`
+
+The drop-in marks the hook **required** so WirePlumber actually loads it
+(WirePlumber’s `optional` means “do not load unless something else pulls it
+in”). The tool never restarts WirePlumber. After the restart, the editor shows
+**Lua hook: running**. Saving Match-by-binary then writes only
+`~/.local/state/pw-stream-memory/overrides.json` (no `stream-properties`
+reload). The hook runs after native Chromium restore and overlays volume, mute,
+and sink. Short sounds may flash the Chromium volume for one buffer.
+
+Remove with `pw-stream-memory --uninstall-lua-hook`, then restart WirePlumber
+again.
 
 ### Debounce (optional)
 
@@ -135,10 +171,16 @@ The old names `SOUND_OVERRIDER_DEBOUNCE_ON` / `_OFF` still work as aliases.
 |---|---|
 | `~/.local/state/pw-stream-memory/closed-streams.json` | closed-stream history |
 | `~/.local/state/pw-stream-memory/debounce.json` | which identities have debounce |
+| `~/.local/state/pw-stream-memory/overrides.json` | Lua Match-by-binary sidecar |
+| `~/.local/state/wireplumber/pw-stream-memory` | same sidecar, in WirePlumber `State` form (Lua cannot read JSON files) |
+| `default` metadata key `pw-stream-memory.hook` | live marker that the Lua hook is loaded |
+| `~/.local/share/wireplumber/scripts/pw-stream-memory.lua` | optional Lua hook (after `--install-lua-hook`) |
+| `~/.config/wireplumber/wireplumber.conf.d/99-pw-stream-memory.conf` | optional WirePlumber drop-in |
 | `~/.local/state/wireplumber/stream-properties` | WirePlumber restore database |
 
-If the new state directory does not exist yet, history and debounce still load
-from `~/.local/state/kde_sound_overrider/` (the previous name).
+If the new state directory does not exist yet, history, debounce, and sidecar
+overrides still load from `~/.local/state/kde_sound_overrider/` (the previous
+name).
 
 ## Releasing to PyPI
 

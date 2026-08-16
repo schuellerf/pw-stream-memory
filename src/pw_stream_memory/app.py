@@ -6,9 +6,11 @@ the bottom with an empty end time until they disappear. Closed entries are
 saved to JSON and reloaded on the next launch.
 
 Enter opens an editor for volume, sink, restore identity, and debounce.
-Saves merge into WirePlumber stream-properties after disable / wait / write /
-enable. Debounce (optional, per identity) plays default volume briefly, mutes,
-then restores; it re-arms when the PipeWire node goes idle and runs again.
+Native Match-by keys merge into WirePlumber stream-properties after disable /
+wait / write / enable. Match-by application.process.binary writes a Lua
+sidecar instead (optional WirePlumber hook). Debounce (optional, per identity)
+plays default volume briefly, mutes, then restores; it re-arms when the
+PipeWire node goes idle and runs again.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from typing import Any
 PACTL = shutil.which("pactl") or "pactl"
 WPCTL = shutil.which("wpctl") or "wpctl"
 PW_CLI = shutil.which("pw-cli")
+PW_METADATA = shutil.which("pw-metadata")
 WP_STATE_SAVE_TIMEOUT_S = 1.0
 WP_STATE_LOCK = threading.Lock()
 WP_RESTORE_KEYS = (
@@ -46,8 +49,15 @@ WP_RESTORE_KEYS = (
 HISTORY_VERSION = 2
 SAVE_STEPS = 4
 DEBOUNCE_VERSION = 1
+OVERRIDES_VERSION = 1
 DEFAULT_DEBOUNCE_ON_MS = 500.0
 DEFAULT_DEBOUNCE_OFF_S = 30.0
+BINARY_PROP = "application.process.binary"
+LUA_HOOK_SCRIPT = "pw-stream-memory.lua"
+LUA_HOOK_CONF = "99-pw-stream-memory.conf"
+LUA_HOOK_CACHE_S = 1.0
+LUA_HOOK_META_KEY = "pw-stream-memory.hook"
+WP_SIDECAR_STATE_NAME = "pw-stream-memory"
 FORM_KEY_PROPS = (
     "media.role",
     "application.id",
@@ -89,6 +99,11 @@ def xdg_data_root() -> Path:
     return Path(data) if data else Path.home() / ".local" / "share"
 
 
+def xdg_config_root() -> Path:
+    cfg = os.environ.get("XDG_CONFIG_HOME")
+    return Path(cfg) if cfg else Path.home() / ".config"
+
+
 def xdg_state_root() -> Path:
     state = os.environ.get("XDG_STATE_HOME")
     return Path(state) if state else Path.home() / ".local" / "state"
@@ -112,6 +127,28 @@ def default_stream_properties_path() -> Path:
 
 def default_debounce_path() -> Path:
     return _app_state_file("debounce.json")
+
+
+def default_overrides_path() -> Path:
+    return _app_state_file("overrides.json")
+
+
+def canonical_overrides_path() -> Path:
+    return xdg_state_root() / "pw-stream-memory" / "overrides.json"
+
+
+def hook_loaded_path() -> Path:
+    return xdg_state_root() / "pw-stream-memory" / "hook-loaded"
+
+
+def wireplumber_sidecar_state_path() -> Path:
+    return xdg_state_root() / "wireplumber" / WP_SIDECAR_STATE_NAME
+
+
+def lua_hook_install_paths() -> tuple[Path, Path]:
+    script = xdg_data_root() / "wireplumber" / "scripts" / LUA_HOOK_SCRIPT
+    conf = xdg_config_root() / "wireplumber" / "wireplumber.conf.d" / LUA_HOOK_CONF
+    return script, conf
 
 
 def debounce_on_ms() -> float:
@@ -231,6 +268,10 @@ def identity_choices(props: dict[str, str]) -> list[tuple[str, str, str, bool]]:
             continue
         full = f"{klass}:{name}:{value}"
         choices.append((name, value, full, name == default_name))
+    binary = props.get(BINARY_PROP)
+    if binary:
+        full = f"{klass}:{BINARY_PROP}:{binary}"
+        choices.append((BINARY_PROP, binary, full, False))
     return choices
 
 
@@ -469,6 +510,257 @@ def with_stream_properties_reload(
 def stored_restore_target(stream_properties_path: Path, key: str) -> str | None:
     entries = parse_stream_properties(stream_properties_path)
     target = (entries.get(key) or {}).get("target")
+    if isinstance(target, str) and target.strip():
+        return target
+    return None
+
+
+@dataclass
+class LuaHookInfo:
+    status: str
+    script_path: Path
+    conf_path: Path
+    marker_path: Path
+    wp_pid: int | None
+    marker_pid: int | None
+
+
+_LUA_HOOK_CACHE: tuple[float, LuaHookInfo] | None = None
+
+
+def wireplumber_main_pid() -> int | None:
+    try:
+        out = subprocess.check_output(
+            ["systemctl", "--user", "show", "-p", "MainPID", "--value", "wireplumber.service"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        )
+        pid = int((out or "0").strip() or "0")
+        if pid > 0:
+            return pid
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
+        pass
+    pgrep = shutil.which("pgrep")
+    if not pgrep:
+        return None
+    try:
+        out = subprocess.check_output(
+            [pgrep, "-u", str(os.getuid()), "-x", "wireplumber"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    for token in (out or "").split():
+        try:
+            pid = int(token)
+        except ValueError:
+            continue
+        if pid > 0:
+            return pid
+    return None
+
+
+def parse_hook_loaded_pid(path: Path) -> int | None:
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        if raw.startswith("pid="):
+            raw = raw.split("=", 1)[1].strip()
+        try:
+            pid = int(raw)
+        except ValueError:
+            continue
+        if pid > 0:
+            return pid
+    return None
+
+
+def lua_hook_metadata_loaded() -> bool:
+    cmd = PW_METADATA or shutil.which("pw-metadata")
+    if not cmd:
+        return False
+    try:
+        out = subprocess.check_output(
+            [cmd, "-n", "default"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+    return LUA_HOOK_META_KEY in (out or "")
+
+
+def lua_hook_info(*, force: bool = False) -> LuaHookInfo:
+    global _LUA_HOOK_CACHE
+    now = time.monotonic()
+    if not force and _LUA_HOOK_CACHE is not None and now - _LUA_HOOK_CACHE[0] < LUA_HOOK_CACHE_S:
+        return _LUA_HOOK_CACHE[1]
+    script, conf = lua_hook_install_paths()
+    marker = hook_loaded_path()
+    wp_pid = wireplumber_main_pid()
+    marker_pid = parse_hook_loaded_pid(marker)
+    installed = script.is_file() and conf.is_file()
+    running = bool(wp_pid) and lua_hook_metadata_loaded()
+    if running:
+        status = "running"
+    elif installed:
+        status = "installed"
+    else:
+        status = "missing"
+    info = LuaHookInfo(
+        status=status,
+        script_path=script,
+        conf_path=conf,
+        marker_path=marker,
+        wp_pid=wp_pid,
+        marker_pid=marker_pid,
+    )
+    _LUA_HOOK_CACHE = (now, info)
+    return info
+
+
+def lua_hook_messages(info: LuaHookInfo) -> tuple[str, str]:
+    if info.status == "running":
+        return (
+            "Lua hook: running  ·  Restore: Lua sidecar (no stream-properties reload)",
+            "Stock WirePlumber still restores Chromium; this overlay applies after that.",
+        )
+    if info.status == "installed":
+        return (
+            "Lua hook: installed, not loaded",
+            "Restart WirePlumber to load the hook: systemctl --user restart wireplumber",
+        )
+    return (
+        "Lua hook: not installed",
+        "Install with pw-stream-memory --install-lua-hook, then restart WirePlumber.",
+    )
+
+
+def load_overrides(path: Path | None = None) -> list[dict[str, Any]]:
+    target = path or default_overrides_path()
+    if not target.is_file():
+        return []
+    with target.open(encoding="utf-8") as fh:
+        data = json.load(fh)
+    if isinstance(data, dict):
+        items = data.get("overrides") or []
+    elif isinstance(data, list):
+        items = data
+    else:
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def save_overrides(items: list[dict[str, Any]]) -> None:
+    payload = {"version": OVERRIDES_VERSION, "overrides": items}
+    atomic_write_text(
+        canonical_overrides_path(),
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+    )
+    # Lua cannot use io.open; it loads this Wp.State mirror instead.
+    compact = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    atomic_write_text(
+        wireplumber_sidecar_state_path(),
+        f"[{WP_SIDECAR_STATE_NAME}]\noverrides={compact}\n",
+    )
+
+
+def override_media_class(item: dict[str, Any]) -> str | None:
+    want = item.get("media_class")
+    return want if isinstance(want, str) and want else None
+
+
+def find_binary_override(
+    props: dict[str, str],
+    *,
+    value: str | None = None,
+    overrides: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    binary = value if value is not None else props.get(BINARY_PROP)
+    if not binary:
+        return None
+    klass = media_class_key(props)
+    raw = props.get("media.class") or ""
+    for item in overrides if overrides is not None else load_overrides():
+        if item.get("prop") != BINARY_PROP or item.get("value") != binary:
+            continue
+        want = override_media_class(item)
+        if want and want not in (klass, raw):
+            continue
+        return item
+    return None
+
+
+def sidecar_restore_values(result: EditorResult, rec: StreamRecord) -> dict[str, Any]:
+    spa_linear = pulse_percent_to_spa_linear(result.percent)
+    cmap = rec.channel_map or ["FL", "FR"]
+    cvols = [spa_linear] * max(1, len(cmap))
+    return {
+        "mute": result.mute,
+        "volume": 1.0,
+        "channelVolumes": cvols,
+        "channelMap": cmap,
+        "target": result.sink_name,
+    }
+
+
+def upsert_binary_override(rec: StreamRecord, result: EditorResult) -> None:
+    values = sidecar_restore_values(result, rec)
+    klass = media_class_key(rec.properties)
+    entry = {
+        "prop": BINARY_PROP,
+        "value": result.value,
+        "media_class": klass,
+        **values,
+    }
+    kept: list[dict[str, Any]] = []
+    for item in load_overrides():
+        if (
+            item.get("prop") == BINARY_PROP
+            and item.get("value") == result.value
+            and (override_media_class(item) in (None, klass))
+        ):
+            continue
+        kept.append(item)
+    kept.append(entry)
+    save_overrides(kept)
+
+
+def delete_binary_override(result: EditorResult) -> bool:
+    klass = result.key.split(":", 1)[0] if ":" in result.key else ""
+    kept: list[dict[str, Any]] = []
+    found = False
+    for item in load_overrides():
+        if item.get("prop") == result.prop and item.get("value") == result.value:
+            want = override_media_class(item)
+            if want and klass and want != klass:
+                kept.append(item)
+                continue
+            found = True
+            continue
+        kept.append(item)
+    if not found:
+        return False
+    save_overrides(kept)
+    return True
+
+
+def stored_sidecar_target(props: dict[str, str], value: str) -> str | None:
+    ov = find_binary_override(props, value=value)
+    if not ov:
+        return None
+    target = ov.get("target")
     if isinstance(target, str) and target.strip():
         return target
     return None
@@ -1274,11 +1566,21 @@ def save_stream_settings(
         "channelMap": cmap,
         "target": result.sink_name,
     }
-    reload_note = with_stream_properties_reload(
-        stream_properties_path,
-        lambda: merge_stream_properties(stream_properties_path, result.key, values),
-        on_progress=on_progress,
-    )
+    notes: list[str] = []
+    if result.prop == BINARY_PROP:
+        if lua_hook_info(force=True).status != "running":
+            return "Lua hook is not running; binary identity was not saved"
+        upsert_binary_override(rec, result)
+        notes.append("saved Lua sidecar")
+        notes.append("no stream-properties reload")
+    else:
+        reload_note = with_stream_properties_reload(
+            stream_properties_path,
+            lambda: merge_stream_properties(stream_properties_path, result.key, values),
+            on_progress=on_progress,
+        )
+        notes.append("saved stream-properties")
+        notes.append(reload_note)
     upsert_debounce(
         debounce_path,
         {
@@ -1288,7 +1590,6 @@ def save_stream_settings(
             "enabled": result.debounce,
         },
     )
-    notes = ["saved stream-properties", reload_note]
     if result.debounce:
         notes.append("debounce on")
     else:
@@ -1313,6 +1614,10 @@ def delete_stream_settings(
     stream_properties_path: Path,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> str:
+    if result.prop == BINARY_PROP:
+        if delete_binary_override(result):
+            return f"deleted Lua sidecar override for {result.key}"
+        return "no Lua sidecar override for this key"
     existed = stream_properties_entry(stream_properties_path, result.key) is not None
     if not existed:
         return "no stream-properties entry for this key"
@@ -1324,22 +1629,35 @@ def delete_stream_settings(
     return f"deleted WP restore for {result.key}; {reload_note}"
 
 
-def confirm_delete_wp_entry(
+def confirm_delete_restore_entry(
     stdscr: curses.window,
     key: str,
     header_attr: int,
     meta_attr: int,
     error_attr: int,
+    *,
+    lua_sidecar: bool = False,
 ) -> bool:
     stdscr.nodelay(False)
     stdscr.timeout(-1)
+    title = " Delete Lua sidecar override " if lua_sidecar else " Delete WirePlumber restore "
+    intro = (
+        "Remove the saved Lua sidecar override for:"
+        if lua_sidecar
+        else "Remove the saved restore entry for:"
+    )
+    follow = (
+        "The next matching stream will not get the Lua overlay."
+        if lua_sidecar
+        else "The next matching stream will use WirePlumber defaults."
+    )
     while True:
         h, w = stdscr.getmaxyx()
         stdscr.erase()
-        _add(stdscr, 0, 0, " Delete WirePlumber restore ", w, header_attr)
-        _add(stdscr, 2, 1, "Remove the saved restore entry for:", w - 2, meta_attr)
+        _add(stdscr, 0, 0, title, w, header_attr)
+        _add(stdscr, 2, 1, intro, w - 2, meta_attr)
         _add(stdscr, 4, 1, key, w - 2, error_attr)
-        _add(stdscr, 6, 1, "The next matching stream will use WirePlumber defaults.", w - 2, meta_attr)
+        _add(stdscr, 6, 1, follow, w - 2, meta_attr)
         _add(stdscr, h - 1, 0, " y confirm   n/Esc cancel ", w, meta_attr)
         stdscr.noutrefresh()
         curses.doupdate()
@@ -1404,12 +1722,22 @@ def run_editor(
     sinks = list_sinks()
     sink_names: list[str | None] = [None, *[name for name, _desc in sinks]]
     ident_idx = next((i for i, item in enumerate(choices) if item[3]), 0)
+    sidecar = find_binary_override(rec.properties)
+    if sidecar:
+        wanted = str(sidecar.get("value") or "")
+        for i, (name, value, _full, _default) in enumerate(choices):
+            if name == BINARY_PROP and value == wanted:
+                ident_idx = i
+                break
     percent = 100.0 if rec.volume_linear is None else max(0.0, min(150.0, rec.volume_linear * 100.0))
     mute = rec.mute
 
     def sink_idx_for_identity(ident_i: int) -> int:
-        _prop_i, _value_i, key_i, _default = choices[ident_i]
-        target = stored_restore_target(stream_properties_path, key_i)
+        prop_i, value_i, key_i, _default = choices[ident_i]
+        if prop_i == BINARY_PROP:
+            target = stored_sidecar_target(rec.properties, value_i)
+        else:
+            target = stored_restore_target(stream_properties_path, key_i)
         if not target:
             return 0
         if target not in sink_names:
@@ -1447,8 +1775,14 @@ def run_editor(
         _add(stdscr, 0, 0, " Edit stream   Tab/↑↓ field   ←→ change   Enter save   d delete   Esc cancel ", w, header_attr)
         _add(stdscr, 1, 1, rec.label, w - 2, meta_attr)
 
+        if prop == BINARY_PROP:
+            match_tag = "  [Lua sidecar]"
+        elif is_default:
+            match_tag = "  [WP default]"
+        else:
+            match_tag = "  [custom]"
         rows = [
-            ("Match by", f"{prop}={value}" + ("  [WP default]" if is_default else "  [custom]")),
+            ("Match by", f"{prop}={value}" + match_tag),
             ("Volume", f"{shown_pct:.0f}%"),
             ("Sink", sink_label),
             ("Mute", "yes" if mute else "no"),
@@ -1458,25 +1792,38 @@ def run_editor(
             attr = field_attr if i == field_i else curses.A_NORMAL
             _add(stdscr, 3 + i, 1, f"{'>' if i == field_i else ' '} {name:<10} {val}", w - 2, attr)
 
-        wp_obj = stream_properties_entry(stream_properties_path, full_key)
-        wp_line = f"WP restore: {describe_wp_entry(wp_obj)}"
-        _add(stdscr, 8, 1, f"WP key: {full_key}", w - 2, meta_attr)
-        _add(stdscr, 9, 1, wp_line, w - 2, meta_attr)
         on_ms = debounce_on_ms()
         off_s = debounce_off_s()
         db_help = (
             f"Debounce: {on_ms:.0f}ms at default volume, then mute {off_s:.0f}s, then restore. "
             "Re-arms on idle→running or uncork. PW_STREAM_MEMORY_DEBOUNCE_ON / _OFF override timings."
         )
-        if is_default:
-            warn = "Stock WirePlumber restores this key. Live streams are also applied with pactl now."
+        if prop == BINARY_PROP:
+            lua_info = lua_hook_info()
+            status_line, hint_line = lua_hook_messages(lua_info)
+            sidecar_obj = find_binary_override(rec.properties, value=value)
+            restore_line = f"Sidecar restore: {describe_wp_entry(sidecar_obj)}"
+            _add(stdscr, 8, 1, f"Lua key: {full_key}", w - 2, meta_attr)
+            _add(stdscr, 9, 1, restore_line, w - 2, meta_attr)
+            _add(stdscr, 10, 1, status_line, w - 2, meta_attr if lua_info.status == "running" else error_attr)
+            _add(stdscr, 11, 1, hint_line, w - 2, error_attr if lua_info.status != "running" else meta_attr)
+            _add(stdscr, 12, 1, db_help, w - 2, meta_attr)
+            footer = " ←→ identity/volume/sink   space mute/debounce   d/Del delete sidecar   Enter save "
         else:
-            warn = "Custom key is not native: WirePlumber restores only its default identity."
-        _add(stdscr, 10, 1, warn, w - 2, error_attr if not is_default else meta_attr)
-        _add(stdscr, 11, 1, db_help, w - 2, meta_attr)
+            wp_obj = stream_properties_entry(stream_properties_path, full_key)
+            wp_line = f"WP restore: {describe_wp_entry(wp_obj)}"
+            _add(stdscr, 8, 1, f"WP key: {full_key}", w - 2, meta_attr)
+            _add(stdscr, 9, 1, wp_line, w - 2, meta_attr)
+            if is_default:
+                warn = "Stock WirePlumber restores this key. Live streams are also applied with pactl now."
+            else:
+                warn = "Custom key is not native: WirePlumber restores only its default identity."
+            _add(stdscr, 10, 1, warn, w - 2, error_attr if not is_default else meta_attr)
+            _add(stdscr, 11, 1, db_help, w - 2, meta_attr)
+            footer = " ←→ identity/volume/sink   space mute/debounce   d/Del delete WP entry   Enter save "
         if message:
             _add(stdscr, 13, 1, message, w - 2, error_attr)
-        _add(stdscr, h - 1, 0, " ←→ identity/volume/sink   space mute/debounce   d/Del delete WP entry   Enter save ", w, meta_attr)
+        _add(stdscr, h - 1, 0, footer, w, meta_attr)
         stdscr.noutrefresh()
         curses.doupdate()
 
@@ -1537,13 +1884,24 @@ def run_editor(
                 debounce = not debounce
                 debounce_touched = True
         elif key in (ord("d"), ord("D"), curses.KEY_DC):
-            if stream_properties_entry(stream_properties_path, full_key) is None:
-                message = "No WirePlumber restore entry for this key"
-                continue
-            if not confirm_delete_wp_entry(stdscr, full_key, header_attr, meta_attr, error_attr):
-                stdscr.nodelay(True)
-                stdscr.timeout(80)
-                continue
+            if prop == BINARY_PROP:
+                if find_binary_override(rec.properties, value=value) is None:
+                    message = "No Lua sidecar override for this key"
+                    continue
+                if not confirm_delete_restore_entry(
+                    stdscr, full_key, header_attr, meta_attr, error_attr, lua_sidecar=True
+                ):
+                    stdscr.nodelay(True)
+                    stdscr.timeout(80)
+                    continue
+            else:
+                if stream_properties_entry(stream_properties_path, full_key) is None:
+                    message = "No WirePlumber restore entry for this key"
+                    continue
+                if not confirm_delete_restore_entry(stdscr, full_key, header_attr, meta_attr, error_attr):
+                    stdscr.nodelay(True)
+                    stdscr.timeout(80)
+                    continue
             return EditorResult(
                 prop=prop,
                 value=value,
@@ -1571,6 +1929,20 @@ def run_editor(
             except ValueError:
                 percent_buf = percent_buf[:-1]
         elif key in (10, 13, curses.KEY_ENTER):
+            if prop == BINARY_PROP:
+                lua_info = lua_hook_info(force=True)
+                if lua_info.status != "running":
+                    if lua_info.status == "installed":
+                        message = (
+                            "Lua hook is not loaded; save refused. "
+                            "Restart WirePlumber (systemctl --user restart wireplumber), then save again."
+                        )
+                    else:
+                        message = (
+                            "Lua hook is not installed; save refused. "
+                            "Run pw-stream-memory --install-lua-hook, then restart WirePlumber."
+                        )
+                    continue
             return EditorResult(
                 prop=prop,
                 value=value,
@@ -1860,6 +2232,49 @@ def install_desktop_launcher() -> int:
     return 0
 
 
+def _copy_pkg_data(name: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    pkg = files("pw_stream_memory.data")
+    with as_file(pkg.joinpath(name)) as src:
+        dest.write_bytes(Path(src).read_bytes())
+    print(dest)
+
+
+def _print_wp_restart_hint() -> None:
+    print("Restart WirePlumber to apply:")
+    print("  systemctl --user restart wireplumber")
+    print("This tool does not restart WirePlumber for you.")
+
+
+def install_lua_hook() -> int:
+    script_dest, conf_dest = lua_hook_install_paths()
+    _copy_pkg_data(LUA_HOOK_SCRIPT, script_dest)
+    _copy_pkg_data(LUA_HOOK_CONF, conf_dest)
+    hook_loaded_path().parent.mkdir(parents=True, exist_ok=True)
+    if default_overrides_path().is_file() or canonical_overrides_path().is_file():
+        save_overrides(load_overrides())
+    print("Lua hook files installed.")
+    _print_wp_restart_hint()
+    return 0
+
+
+def uninstall_lua_hook() -> int:
+    script_dest, conf_dest = lua_hook_install_paths()
+    removed = False
+    for path in (script_dest, conf_dest):
+        if path.is_file():
+            path.unlink()
+            print(f"removed {path}")
+            removed = True
+        else:
+            print(f"not installed: {path}")
+    if not removed:
+        print("Lua hook was not installed.")
+    else:
+        _print_wp_restart_hint()
+    return 0
+
+
 def _require_tty() -> None:
     if not sys.stdout.isatty() or not sys.stdin.isatty():
         print("This UI needs a real terminal (stdin and stdout as a tty).", file=sys.stderr)
@@ -1904,10 +2319,27 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Install a user .desktop launcher (opens in a terminal on any freedesktop DE)",
     )
+    parser.add_argument(
+        "--install-lua-hook",
+        action="store_true",
+        help="Install the optional WirePlumber Lua hook for Match-by-binary (does not restart WirePlumber)",
+    )
+    parser.add_argument(
+        "--uninstall-lua-hook",
+        action="store_true",
+        help="Remove the optional WirePlumber Lua hook files (does not restart WirePlumber)",
+    )
     args = parser.parse_args(argv)
 
+    if args.install_lua_hook and args.uninstall_lua_hook:
+        print("Choose one of --install-lua-hook or --uninstall-lua-hook.", file=sys.stderr)
+        return 2
     if args.install_desktop:
         return install_desktop_launcher()
+    if args.install_lua_hook:
+        return install_lua_hook()
+    if args.uninstall_lua_hook:
+        return uninstall_lua_hook()
 
     if shutil.which("pactl") is None:
         print("pactl not found in PATH.", file=sys.stderr)

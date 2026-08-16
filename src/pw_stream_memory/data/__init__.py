@@ -1,1 +1,1 @@
-# Packaged launcher and icons (freedesktop.org).
+# Packaged launcher, icons, and optional WirePlumber Lua hook.
