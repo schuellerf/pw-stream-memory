@@ -1,6 +1,6 @@
 # pw-stream-memory
 
-<img src="assets/logo.png" width="160" alt="pw-stream-memory logo">
+<img src="https://raw.githubusercontent.com/schuellerf/pw-stream-memory/main/assets/logo.png" width="160" alt="pw-stream-memory logo">
 
 A terminal UI for **PipeWire + WirePlumber** that remembers per-application
 playback volume, mute, and output device after the stream is gone.

@@ -6,6 +6,13 @@ on:
     branches: [main]
 
 jobs:
+  icons:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check PNGs were regenerated from the SVG
+        run: make check-pngs
+
   build:
     runs-on: ubuntu-latest
     steps:

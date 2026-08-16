@@ -1,15 +1,116 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="pw-stream-memory">
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 128 128"
+   role="img"
+   aria-label="pw-stream-memory"
+   version="1.1"
+   id="svg6"
+   sodipodi:docname="pw-stream-memory.svg"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs6" />
+  <sodipodi:namedview
+     id="namedview6"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="3.2070786"
+     inkscape:cx="80.291141"
+     inkscape:cy="62.517956"
+     inkscape:window-width="1920"
+     inkscape:window-height="1016"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg6" />
   <!-- Speaker + waves (stream) and a bookmark (remembered restore). -->
-  <rect x="4" y="4" width="120" height="120" rx="28" fill="#0f172a"/>
-  <rect x="4" y="4" width="120" height="120" rx="28" fill="none" stroke="#1e3a5f" stroke-width="3"/>
+  <rect
+     x="4"
+     y="4"
+     width="120"
+     height="120"
+     rx="28"
+     fill="#0f172a"
+     id="rect1" />
+  <path
+     fill="#fbbf24"
+     d="m 85.451723,35.776701 h 15.322517 c 1.87275,0 3.40501,1.151709 3.40501,2.559353 V 92.059255 L 93.11298,84.404411 82.046722,92.223299 V 38.336054 c 0,-1.407644 1.53225,-2.559353 3.405001,-2.559353 z"
+     id="path2"
+     sodipodi:nodetypes="ssscccss"
+     style="stroke-width:0.738015" />
+  <rect
+     x="4"
+     y="4"
+     width="120"
+     height="120"
+     rx="28"
+     fill="none"
+     stroke="#1e3a5f"
+     stroke-width="3"
+     id="rect2" />
   <!-- bookmark (memory) sits behind the outer wave -->
-  <path fill="#fbbf24" d="M90 22h18c2.2 0 4 1.8 4 4v62l-13 10-13-10V26c0-2.2 1.8-4 4-4z"/>
   <!-- speaker -->
-  <rect x="20" y="50" width="16" height="28" rx="3" fill="#2dd4bf"/>
-  <path fill="#2dd4bf" d="M36 46l24-16v68L36 82z"/>
   <!-- waves -->
-  <path fill="none" stroke="#2dd4bf" stroke-width="5" stroke-linecap="round" d="M66 48c6 8 6 24 0 32"/>
-  <path fill="none" stroke="#2dd4bf" stroke-width="5" stroke-linecap="round" d="M78 38c10 12 10 40 0 52"/>
-  <path fill="none" stroke="#2dd4bf" stroke-width="5" stroke-linecap="round" d="M90 28c14 16 14 56 0 72"/>
+  <g
+     id="g6"
+     transform="matrix(0.80304064,0,0,0.80304064,14.331887,18.021393)">
+    <path
+       fill="none"
+       stroke="#2dd4bf"
+       stroke-width="5"
+       stroke-linecap="round"
+       d="m 76.411769,25.506387 c 13.426472,14.11078 13.426472,49.387729 0,63.498509"
+       id="path6-2"
+       style="stroke:#0f172a;stroke-width:8.27704;stroke-dasharray:none;stroke-opacity:1" />
+    <path
+       id="rect3"
+       d="M 53.562895,23.928463 29.768168,41.89857 c 0,0 -1.369877,1.151167 -3.008481,1.137118 -1.638603,-0.01405 -11.086124,0 -11.086124,0 -1.842514,0 -3.325837,1.364059 -3.325837,3.058428 v 22.428467 c 0,1.694368 1.483323,3.058427 3.325837,3.058427 h 11.086124 c 2.189242,0 5.29187,2.511703 5.29187,2.511703 l 22.237741,16.89186 c 0.715546,0.571468 2.392121,1.218536 2.392121,0.184918 l 0.01086,-67.007078 c 0,-2.138742 -1.665935,-1.428742 -3.129327,-0.23395 z"
+       style="fill:#2dd4bf;fill-opacity:1;stroke:#2dd4bf;stroke-width:1.06311;stroke-opacity:1"
+       sodipodi:nodetypes="cczsssszccccc" />
+    <path
+       fill="none"
+       stroke="#2dd4bf"
+       stroke-width="4.59836"
+       stroke-linecap="round"
+       d="m 62.985297,43.144862 c 5.754203,7.05539 5.754203,21.16617 0,28.221559"
+       id="path4" />
+    <path
+       fill="none"
+       stroke="#2dd4bf"
+       stroke-width="5"
+       stroke-linecap="round"
+       d="m 68.7395,34.325624 c 9.590337,10.583085 9.590337,35.27695 0,45.860034"
+       id="path5-7"
+       style="stroke:#0f172a;stroke-width:7.55856;stroke-dasharray:none;stroke-opacity:1" />
+    <path
+       fill="none"
+       stroke="#2dd4bf"
+       stroke-width="4.59836"
+       stroke-linecap="round"
+       d="m 68.7395,34.325624 c 9.590337,10.583085 9.590337,35.27695 0,45.860034"
+       id="path5" />
+    <path
+       fill="none"
+       stroke="#2dd4bf"
+       stroke-width="5"
+       stroke-linecap="round"
+       d="m 76.411769,25.506387 c 13.426472,14.11078 13.426472,49.387729 0,63.498509"
+       id="path6-1"
+       style="stroke:#0f172a;stroke-width:7.35737;stroke-dasharray:none;stroke-opacity:1" />
+    <path
+       fill="none"
+       stroke="#2dd4bf"
+       stroke-width="4.59836"
+       stroke-linecap="round"
+       d="m 76.411769,25.506387 c 13.426472,14.11078 13.426472,49.387729 0,63.498509"
+       id="path6" />
+  </g>
 </svg>
