@@ -19,6 +19,7 @@ import argparse
 import curses
 import json
 import locale
+import math
 import os
 import queue
 import shutil
@@ -1092,6 +1093,7 @@ class DebounceJob:
     cancel: threading.Event = field(default_factory=threading.Event)
     phase: str = "on"
     token: int = 0
+    mute_until: float | None = None
 
 
 class DebounceEngine:
@@ -1123,12 +1125,15 @@ class DebounceEngine:
         for job in jobs:
             job.cancel.set()
 
-    def phase_for(self, index: int) -> str | None:
+    def phase_for(self, index: int) -> tuple[str | None, int | None]:
         with self._lock:
             job = self._jobs.get(index)
             if job is None:
-                return None
-            return job.phase
+                return None, None
+            remaining: int | None = None
+            if job.phase == "off" and job.mute_until is not None:
+                remaining = max(0, math.ceil(job.mute_until - time.monotonic()))
+            return job.phase, remaining
 
     def enabled_for(self, props: dict[str, str]) -> dict[str, Any] | None:
         with self._lock:
@@ -1219,16 +1224,19 @@ class DebounceEngine:
 
     def _run_cycle(self, job: DebounceJob) -> None:
         job.phase = "on"
+        job.mute_until = None
         if not apply_live_volume_mute(job.index, job.percent, False):
             return
         if not self._wait(job, debounce_on_ms() / 1000.0):
             return
         job.phase = "off"
+        job.mute_until = time.monotonic() + debounce_off_s()
         if not apply_live_volume_mute(job.index, job.percent, True):
             return
         if not self._wait(job, debounce_off_s()):
             return
         job.phase = "idle"
+        job.mute_until = None
         if not apply_live_volume_mute(job.index, job.percent, False):
             return
         self._idle_watch(job)
@@ -2052,11 +2060,16 @@ class Tui:
                 if rec.corked:
                     flags.append("corked")
                 if self.monitor.debounce is not None:
-                    phase = self.monitor.debounce.phase_for(rec.index) if rec.active else None
+                    phase, mute_left = (
+                        self.monitor.debounce.phase_for(rec.index) if rec.active else (None, None)
+                    )
                     if phase == "on":
                         flags.append("debounce")
                     elif phase == "off":
-                        flags.append("debounce-mute")
+                        if mute_left is None:
+                            flags.append("debounce-mute")
+                        else:
+                            flags.append(f"debounce-mute {mute_left}s")
                     elif phase == "idle":
                         flags.append("debounce-idle")
                 label = rec.label
