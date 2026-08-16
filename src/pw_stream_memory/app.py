@@ -473,11 +473,11 @@ def with_stream_properties_reload(
             progress(3, "save stream-properties")
             write_fn()
             if not disabled:
-                note = "wrote file without WP reload"
+                note = "wrote file without WirePlumber reload"
             elif flushed:
-                note = "WP flushed then reloaded"
+                note = "WirePlumber flushed then reloaded"
             else:
-                note = "WP reload after 1s wait"
+                note = "WirePlumber reload after 1s wait"
         finally:
             progress(4, "enable restore")
             for key in disabled:
@@ -1634,7 +1634,7 @@ def delete_stream_settings(
         lambda: delete_stream_properties_entry(stream_properties_path, result.key),
         on_progress=on_progress,
     )
-    return f"deleted WP restore for {result.key}; {reload_note}"
+    return f"deleted WirePlumber restore for {result.key}; {reload_note}"
 
 
 def confirm_delete_restore_entry(
@@ -1786,7 +1786,7 @@ def run_editor(
         if prop == BINARY_PROP:
             match_tag = "  [Lua sidecar]"
         elif is_default:
-            match_tag = "  [WP default]"
+            match_tag = "  [WirePlumber default]"
         else:
             match_tag = "  [custom]"
         rows = [
@@ -1819,8 +1819,8 @@ def run_editor(
             footer = " ←→ identity/volume/sink   space mute/debounce   d/Del delete sidecar   Enter save "
         else:
             wp_obj = stream_properties_entry(stream_properties_path, full_key)
-            wp_line = f"WP restore: {describe_wp_entry(wp_obj)}"
-            _add(stdscr, 8, 1, f"WP key: {full_key}", w - 2, meta_attr)
+            wp_line = f"WirePlumber restore: {describe_wp_entry(wp_obj)}"
+            _add(stdscr, 8, 1, f"WirePlumber key: {full_key}", w - 2, meta_attr)
             _add(stdscr, 9, 1, wp_line, w - 2, meta_attr)
             if is_default:
                 warn = "Stock WirePlumber restores this key. Live streams are also applied with pactl now."
@@ -1828,7 +1828,7 @@ def run_editor(
                 warn = "Custom key is not native: WirePlumber restores only its default identity."
             _add(stdscr, 10, 1, warn, w - 2, error_attr if not is_default else meta_attr)
             _add(stdscr, 11, 1, db_help, w - 2, meta_attr)
-            footer = " ←→ identity/volume/sink   space mute/debounce   d/Del delete WP entry   Enter save "
+            footer = " ←→ identity/volume/sink   space mute/debounce   d/Del delete WirePlumber entry   Enter save "
         if message:
             _add(stdscr, 13, 1, message, w - 2, error_attr)
         _add(stdscr, h - 1, 0, footer, w, meta_attr)
