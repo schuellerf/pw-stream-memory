@@ -8,9 +8,9 @@ saved to JSON and reloaded on the next launch.
 Enter opens an editor for volume, sink, restore identity, and debounce.
 Native Match-by keys merge into WirePlumber stream-properties after disable /
 wait / write / enable. Match-by application.process.binary writes a Lua
-sidecar instead (optional WirePlumber hook). Debounce (optional, per identity)
-plays default volume briefly, mutes, then restores; it re-arms when the
-PipeWire node goes idle and runs again.
+sidecar (WirePlumber hook). Debounce (per identity) plays default volume
+briefly, mutes, then restores; it re-arms when the PipeWire node goes idle
+and runs again.
 """
 
 from __future__ import annotations
@@ -58,6 +58,7 @@ LUA_HOOK_CONF = "99-pw-stream-memory.conf"
 LUA_HOOK_CACHE_S = 1.0
 LUA_HOOK_META_KEY = "pw-stream-memory.hook"
 WP_SIDECAR_STATE_NAME = "pw-stream-memory"
+# Native WirePlumber restore keys, in formKey() order.
 FORM_KEY_PROPS = (
     "media.role",
     "application.id",
@@ -110,11 +111,12 @@ def xdg_state_root() -> Path:
 
 
 def _app_state_file(name: str) -> Path:
-    new = xdg_state_root() / "pw-stream-memory" / name
-    old = xdg_state_root() / "kde_sound_overrider" / name
-    if not new.is_file() and old.is_file():
-        return old
-    return new
+    """Return a state file under pw-stream-memory, or kde_sound_overrider if that is all that exists."""
+    current = xdg_state_root() / "pw-stream-memory" / name
+    previous = xdg_state_root() / "kde_sound_overrider" / name
+    if not current.is_file() and previous.is_file():
+        return previous
+    return current
 
 
 def default_history_path() -> Path:
@@ -135,10 +137,6 @@ def default_overrides_path() -> Path:
 
 def canonical_overrides_path() -> Path:
     return xdg_state_root() / "pw-stream-memory" / "overrides.json"
-
-
-def hook_loaded_path() -> Path:
-    return xdg_state_root() / "pw-stream-memory" / "hook-loaded"
 
 
 def wireplumber_sidecar_state_path() -> Path:
@@ -438,8 +436,8 @@ def _file_stamp(path: Path) -> tuple[int, int] | None:
 def wait_for_wp_state_flush(path: Path, timeout: float = WP_STATE_SAVE_TIMEOUT_S) -> bool:
     """Wait until stream-properties is rewritten, or *timeout* seconds.
 
-    WirePlumber's Wp.State timeout default is 1000ms. There is no public
-    'save done' signal, so we watch mtime/size after restore has been disabled.
+    WirePlumber flushes Wp.State on a ~1000ms timer. Watch mtime/size after
+    restore has been disabled.
     """
     stamp0 = _file_stamp(path)
     deadline = time.monotonic() + timeout
@@ -520,9 +518,7 @@ class LuaHookInfo:
     status: str
     script_path: Path
     conf_path: Path
-    marker_path: Path
     wp_pid: int | None
-    marker_pid: int | None
 
 
 _LUA_HOOK_CACHE: tuple[float, LuaHookInfo] | None = None
@@ -563,28 +559,6 @@ def wireplumber_main_pid() -> int | None:
     return None
 
 
-def parse_hook_loaded_pid(path: Path) -> int | None:
-    if not path.is_file():
-        return None
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        raw = line.strip()
-        if not raw:
-            continue
-        if raw.startswith("pid="):
-            raw = raw.split("=", 1)[1].strip()
-        try:
-            pid = int(raw)
-        except ValueError:
-            continue
-        if pid > 0:
-            return pid
-    return None
-
-
 def lua_hook_metadata_loaded() -> bool:
     cmd = PW_METADATA or shutil.which("pw-metadata")
     if not cmd:
@@ -607,9 +581,7 @@ def lua_hook_info(*, force: bool = False) -> LuaHookInfo:
     if not force and _LUA_HOOK_CACHE is not None and now - _LUA_HOOK_CACHE[0] < LUA_HOOK_CACHE_S:
         return _LUA_HOOK_CACHE[1]
     script, conf = lua_hook_install_paths()
-    marker = hook_loaded_path()
     wp_pid = wireplumber_main_pid()
-    marker_pid = parse_hook_loaded_pid(marker)
     installed = script.is_file() and conf.is_file()
     running = bool(wp_pid) and lua_hook_metadata_loaded()
     if running:
@@ -622,9 +594,7 @@ def lua_hook_info(*, force: bool = False) -> LuaHookInfo:
         status=status,
         script_path=script,
         conf_path=conf,
-        marker_path=marker,
         wp_pid=wp_pid,
-        marker_pid=marker_pid,
     )
     _LUA_HOOK_CACHE = (now, info)
     return info
@@ -668,7 +638,7 @@ def save_overrides(items: list[dict[str, Any]]) -> None:
         canonical_overrides_path(),
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
     )
-    # Lua cannot use io.open; it loads this Wp.State mirror instead.
+    # JSON for the TUI; Wp.State copy for the Lua hook.
     compact = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     atomic_write_text(
         wireplumber_sidecar_state_path(),
@@ -2180,7 +2150,7 @@ class Tui:
 
 
 def install_desktop_launcher() -> int:
-    """Install a user .desktop launcher. Terminal=true is freedesktop.org, not KDE-only."""
+    """Install a user .desktop launcher (Terminal=true)."""
     root = xdg_data_root()
     apps_dir = root / "applications"
     svg_dir = root / "icons" / "hicolor" / "scalable" / "apps"
@@ -2228,7 +2198,7 @@ def install_desktop_launcher() -> int:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    print("Launcher installed (opens in a terminal via freedesktop Terminal=true).")
+    print("Launcher installed.")
     return 0
 
 
@@ -2250,7 +2220,6 @@ def install_lua_hook() -> int:
     script_dest, conf_dest = lua_hook_install_paths()
     _copy_pkg_data(LUA_HOOK_SCRIPT, script_dest)
     _copy_pkg_data(LUA_HOOK_CONF, conf_dest)
-    hook_loaded_path().parent.mkdir(parents=True, exist_ok=True)
     if default_overrides_path().is_file() or canonical_overrides_path().is_file():
         save_overrides(load_overrides())
     print("Lua hook files installed.")

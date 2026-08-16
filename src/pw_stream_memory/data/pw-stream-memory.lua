@@ -1,10 +1,7 @@
 -- SPDX-License-Identifier: MIT
--- Apply pw-stream-memory sidecar after native stream restore.
--- Matches application.process.binary only (Electron apps such as Slack).
---
--- WirePlumber's Lua sandbox has no io.* / os.execute. Sidecar JSON is mirrored
--- into a Wp.State file by the TUI. The live "loaded" marker is a PipeWire
--- metadata key on the default metadata object.
+-- Apply Match-by-binary overrides after WirePlumber's node/restore-stream.
+-- Reads Wp.State "pw-stream-memory" (the TUI mirrors overrides.json there).
+-- Sets default metadata pw-stream-memory.hook = loaded while this script runs.
 
 log = Log.open_topic ("pw-stream-memory")
 
@@ -197,8 +194,7 @@ function set_live_marker ()
   return result and true or false
 end
 
--- This script is loaded after support.standard-event-source, so metadata-added
--- has usually already fired. Set immediately, then retry a few times.
+-- Default metadata is usually already present; set now, retry if it is not.
 marker_attempts = 0
 function ensure_live_marker ()
   if set_live_marker () then

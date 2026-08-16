@@ -40,7 +40,6 @@ classifiers = [
 pw-stream-memory = "pw_stream_memory:main"
 
 [project.urls]
-# Set these to your GitHub repo after it exists:
 Homepage = "https://github.com/schuellerf/pw-stream-memory"
 Issues = "https://github.com/schuellerf/pw-stream-memory/issues"
 
@@ -53,6 +52,5 @@ packages = ["src/pw_stream_memory"]
 [tool.hatch.build.targets.sdist]
 exclude = [
     "/.github",
-    "/wp-hook",
     "/__pycache__",
 ]

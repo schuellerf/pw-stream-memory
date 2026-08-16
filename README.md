@@ -11,14 +11,14 @@ vanish before you can set them. This tool keeps a history of those streams and
 writes WirePlumber’s native `stream-properties` so the next play restores what
 you chose.
 
-It is **not KDE-specific**. It uses `pactl` (PipeWire’s PulseAudio
-compatibility) for live streams and WirePlumber for persistence. Classic
-PulseAudio without PipeWire/WirePlumber can list and change live streams, but
-cannot store restore state the way this program does.
+It uses `pactl` (PipeWire’s PulseAudio compatibility) for live streams and
+WirePlumber for persistence. Classic PulseAudio without PipeWire/WirePlumber
+can list and change live streams, but cannot store restore state the way this
+program does.
 
 ## Install
 
-From PyPI (after the first release):
+From PyPI:
 
 ```bash
 pipx install pw-stream-memory
@@ -54,7 +54,7 @@ Then look for **pw-stream-memory** in the application menu (Audio / Settings).
 
 ## Requirements
 
-- Python 3.11+ (uses `from __future__ import annotations` style; tested on 3.14)
+- Python 3.11+
 - a tty (ncurses)
 - `pactl` (from PipeWire’s pulse tools)
 - `wpctl` (WirePlumber), for saving restore state
@@ -141,13 +141,12 @@ That copies:
 - `~/.local/share/wireplumber/scripts/pw-stream-memory.lua`
 - `~/.config/wireplumber/wireplumber.conf.d/99-pw-stream-memory.conf`
 
-The drop-in marks the hook **required** so WirePlumber actually loads it
-(WirePlumber’s `optional` means “do not load unless something else pulls it
-in”). The tool never restarts WirePlumber. After the restart, the editor shows
-**Lua hook: running**. Saving Match-by-binary then writes only
-`~/.local/state/pw-stream-memory/overrides.json` (no `stream-properties`
-reload). The hook runs after native Chromium restore and overlays volume, mute,
-and sink. Short sounds may flash the Chromium volume for one buffer.
+The tool does not restart WirePlumber. After you restart it, the editor shows
+**Lua hook: running**. Saving Match-by-binary writes
+`~/.local/state/pw-stream-memory/overrides.json` and a WirePlumber State
+mirror the Lua hook reads. The hook runs after native Chromium restore and
+overlays volume, mute, and sink. Short sounds may flash the Chromium volume
+for one buffer.
 
 Remove with `pw-stream-memory --uninstall-lua-hook`, then restart WirePlumber
 again.
@@ -172,15 +171,14 @@ The old names `SOUND_OVERRIDER_DEBOUNCE_ON` / `_OFF` still work as aliases.
 | `~/.local/state/pw-stream-memory/closed-streams.json` | closed-stream history |
 | `~/.local/state/pw-stream-memory/debounce.json` | which identities have debounce |
 | `~/.local/state/pw-stream-memory/overrides.json` | Lua Match-by-binary sidecar |
-| `~/.local/state/wireplumber/pw-stream-memory` | same sidecar, in WirePlumber `State` form (Lua cannot read JSON files) |
+| `~/.local/state/wireplumber/pw-stream-memory` | Wp.State copy of the sidecar, read by the Lua hook |
 | `default` metadata key `pw-stream-memory.hook` | live marker that the Lua hook is loaded |
 | `~/.local/share/wireplumber/scripts/pw-stream-memory.lua` | optional Lua hook (after `--install-lua-hook`) |
 | `~/.config/wireplumber/wireplumber.conf.d/99-pw-stream-memory.conf` | optional WirePlumber drop-in |
 | `~/.local/state/wireplumber/stream-properties` | WirePlumber restore database |
 
-If the new state directory does not exist yet, history, debounce, and sidecar
-overrides still load from `~/.local/state/kde_sound_overrider/` (the previous
-name).
+If `~/.local/state/pw-stream-memory/` has no file yet, history, debounce, and
+sidecar overrides still load from `~/.local/state/kde_sound_overrider/`.
 
 ## Releasing to PyPI
 

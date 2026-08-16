@@ -1,1 +1,1 @@
-# Packaged launcher, icons, and optional WirePlumber Lua hook.
+# Packaged launcher, icons, and WirePlumber Lua hook.
