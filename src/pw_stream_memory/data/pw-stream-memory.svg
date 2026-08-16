@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="pw-stream-memory">
+  <!-- Speaker + waves (stream) and a bookmark (remembered restore). -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="#0f172a"/>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="none" stroke="#1e3a5f" stroke-width="3"/>
+  <!-- bookmark (memory) sits behind the outer wave -->
+  <path fill="#fbbf24" d="M90 22h18c2.2 0 4 1.8 4 4v62l-13 10-13-10V26c0-2.2 1.8-4 4-4z"/>
+  <!-- speaker -->
+  <rect x="20" y="50" width="16" height="28" rx="3" fill="#2dd4bf"/>
+  <path fill="#2dd4bf" d="M36 46l24-16v68L36 82z"/>
+  <!-- waves -->
+  <path fill="none" stroke="#2dd4bf" stroke-width="5" stroke-linecap="round" d="M66 48c6 8 6 24 0 32"/>
+  <path fill="none" stroke="#2dd4bf" stroke-width="5" stroke-linecap="round" d="M78 38c10 12 10 40 0 52"/>
+  <path fill="none" stroke="#2dd4bf" stroke-width="5" stroke-linecap="round" d="M90 28c14 16 14 56 0 72"/>
+</svg>

@@ -1,5 +1,7 @@
 # pw-stream-memory
 
+<img src="assets/logo.png" width="160" alt="pw-stream-memory logo">
+
 A terminal UI for **PipeWire + WirePlumber** that remembers per-application
 playback volume, mute, and output device after the stream is gone.
 
@@ -33,6 +35,22 @@ pw-stream-memory
 ```
 
 Or without a venv: `pipx install -e .`
+
+### Desktop launcher
+
+`Terminal=true` in the `.desktop` file is [freedesktop.org](https://specifications.freedesktop.org/desktop-entry-spec/latest/), so KDE, GNOME, and other DEs should open it in a terminal. After the command is on your `PATH`:
+
+```bash
+pw-stream-memory --install-desktop
+```
+
+That installs:
+
+- `~/.local/share/applications/pw-stream-memory.desktop`
+- `~/.local/share/icons/hicolor/scalable/apps/pw-stream-memory.svg`
+- `~/.local/share/icons/hicolor/256x256/apps/pw-stream-memory.png`
+
+Then look for **pw-stream-memory** in the application menu (Audio / Settings).
 
 ## Requirements
 

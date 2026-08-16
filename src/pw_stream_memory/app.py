@@ -26,10 +26,11 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from importlib.resources import as_file, files
 from pathlib import Path
-from collections.abc import Callable
 from typing import Any
 
 
@@ -81,6 +82,11 @@ def parse_iso(value: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.astimezone()
     return dt
+
+
+def xdg_data_root() -> Path:
+    data = os.environ.get("XDG_DATA_HOME")
+    return Path(data) if data else Path.home() / ".local" / "share"
 
 
 def xdg_state_root() -> Path:
@@ -1798,6 +1804,59 @@ class Tui:
                 pass
 
 
+def install_desktop_launcher() -> int:
+    """Install a user .desktop launcher. Terminal=true is freedesktop.org, not KDE-only."""
+    root = xdg_data_root()
+    apps_dir = root / "applications"
+    svg_dir = root / "icons" / "hicolor" / "scalable" / "apps"
+    png_dir = root / "icons" / "hicolor" / "256x256" / "apps"
+    for path in (apps_dir, svg_dir, png_dir):
+        path.mkdir(parents=True, exist_ok=True)
+
+    pkg = files("pw_stream_memory.data")
+    copies = (
+        ("pw-stream-memory.svg", svg_dir / "pw-stream-memory.svg"),
+        ("pw-stream-memory.png", png_dir / "pw-stream-memory.png"),
+    )
+    for name, dest in copies:
+        with as_file(pkg.joinpath(name)) as src:
+            dest.write_bytes(Path(src).read_bytes())
+        print(dest)
+
+    found = shutil.which("pw-stream-memory")
+    if found:
+        exec_line = found if " " not in found else f'"{found}"'
+        try_exec = found
+    else:
+        exec_line = f"{sys.executable} -m pw_stream_memory"
+        try_exec = sys.executable
+
+    with as_file(pkg.joinpath("pw-stream-memory.desktop")) as src:
+        text = Path(src).read_text(encoding="utf-8")
+    lines: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("Exec="):
+            lines.append(f"Exec={exec_line}")
+        elif line.startswith("TryExec="):
+            lines.append(f"TryExec={try_exec}")
+        else:
+            lines.append(line)
+    desktop_path = apps_dir / "pw-stream-memory.desktop"
+    desktop_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(desktop_path)
+
+    updater = shutil.which("update-desktop-database")
+    if updater:
+        subprocess.run(
+            [updater, str(apps_dir)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    print("Launcher installed (opens in a terminal via freedesktop Terminal=true).")
+    return 0
+
+
 def _require_tty() -> None:
     if not sys.stdout.isatty() or not sys.stdin.isatty():
         print("This UI needs a real terminal (stdin and stdout as a tty).", file=sys.stderr)
@@ -1837,7 +1896,15 @@ def main(argv: list[str] | None = None) -> int:
         default=default_debounce_path(),
         help="JSON file for per-app debounce flags (default: %(default)s)",
     )
+    parser.add_argument(
+        "--install-desktop",
+        action="store_true",
+        help="Install a user .desktop launcher (opens in a terminal on any freedesktop DE)",
+    )
     args = parser.parse_args(argv)
+
+    if args.install_desktop:
+        return install_desktop_launcher()
 
     if shutil.which("pactl") is None:
         print("pactl not found in PATH.", file=sys.stderr)

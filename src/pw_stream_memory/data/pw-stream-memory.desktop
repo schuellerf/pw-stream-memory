@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=pw-stream-memory
+GenericName=Stream restore editor
+Comment=Remember PipeWire per-app volume, mute, and output device
+Exec=pw-stream-memory
+TryExec=pw-stream-memory
+Icon=pw-stream-memory
+Terminal=true
+Categories=AudioVideo;Audio;Settings;
+Keywords=pipewire;wireplumber;pulse;volume;stream;restore;
+StartupNotify=false
