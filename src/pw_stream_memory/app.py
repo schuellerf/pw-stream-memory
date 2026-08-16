@@ -241,18 +241,14 @@ def form_key(props: dict[str, str]) -> tuple[str, str, str] | None:
 
 
 def identity_choices(props: dict[str, str]) -> list[tuple[str, str, str, bool]]:
-    default = form_key(props)
-    default_name = default[1] if default else None
-    klass = media_class_key(props)
     choices: list[tuple[str, str, str, bool]] = []
-    for name in FORM_KEY_PROPS:
-        value = props.get(name)
-        if not value:
-            continue
-        full = f"{klass}:{name}:{value}"
-        choices.append((name, value, full, name == default_name))
+    default = form_key(props)
+    if default:
+        full, name, value = default
+        choices.append((name, value, full, True))
     binary = props.get(BINARY_PROP)
     if binary:
+        klass = media_class_key(props)
         full = f"{klass}:{BINARY_PROP}:{binary}"
         choices.append((BINARY_PROP, binary, full, False))
     return choices
@@ -1785,10 +1781,8 @@ def run_editor(
 
         if prop == BINARY_PROP:
             match_tag = "  [Lua sidecar]"
-        elif is_default:
-            match_tag = "  [WirePlumber default]"
         else:
-            match_tag = "  [custom]"
+            match_tag = "  [WirePlumber default]"
         rows = [
             ("Match by", f"{prop}={value}" + match_tag),
             ("Volume", f"{shown_pct:.0f}%"),
@@ -1822,11 +1816,8 @@ def run_editor(
             wp_line = f"WirePlumber restore: {describe_wp_entry(wp_obj)}"
             _add(stdscr, 8, 1, f"WirePlumber key: {full_key}", w - 2, meta_attr)
             _add(stdscr, 9, 1, wp_line, w - 2, meta_attr)
-            if is_default:
-                warn = "Stock WirePlumber restores this key. Live streams are also applied with pactl now."
-            else:
-                warn = "Custom key is not native: WirePlumber restores only its default identity."
-            _add(stdscr, 10, 1, warn, w - 2, error_attr if not is_default else meta_attr)
+            warn = "Stock WirePlumber restores this key. Live streams are also applied with pactl now."
+            _add(stdscr, 10, 1, warn, w - 2, meta_attr)
             _add(stdscr, 11, 1, db_help, w - 2, meta_attr)
             footer = " ←→ identity/volume/sink   space mute/debounce   d/Del delete WirePlumber entry   Enter save "
         if message:

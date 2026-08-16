@@ -92,22 +92,22 @@ Closed streams are oldest-first at the top; active streams stay at the bottom.
 
 ### Editor (Enter)
 
-- **Match by** — WirePlumber identity (`media.role`, `application.id`,
-  `application.name`, `media.name`, `node.name`). Stock WirePlumber restores
-  only its default key (first of those that is set). If the stream has
-  `application.process.binary` (Slack, Cursor, other Electron apps), that is
-  offered as an extra **Lua sidecar** identity. It is never WirePlumber’s
-  default key.
+- **Match by** — WirePlumber’s default identity (first of `media.role`,
+  `application.id`, `application.name`, `media.name`, `node.name` that is set).
+  Other native keys are not offered; WirePlumber never looks them up. If the
+  stream has `application.process.binary` (Slack, Cursor, other Electron apps),
+  that is offered as an extra **Lua sidecar** identity. It is never
+  WirePlumber’s default key.
 - **Volume** — 0–150%, same cubic percent as Pulse/KDE. Stored as linear
   `channelVolumes` in WirePlumber (or in the Lua sidecar for Match-by-binary).
 - **Sink** — pin to a device, or **default (no pin)** if you never chose one
 - **Mute**
 - **Debounce** — per identity, see below
-- **WP restore** — for native keys, whether `stream-properties` already has an
-  entry
+- **WirePlumber restore** — for the default key, whether `stream-properties`
+  already has an entry
 - **Lua sidecar** — for Match-by-binary: whether the optional hook is running,
   installed but not loaded, or missing
-- **d / Del** — confirm, delete that restore entry (WP file or Lua sidecar),
+- **d / Del** — confirm, delete that restore entry (WirePlumber file or Lua sidecar),
   leave the editor
 - **Enter** — save; **Esc** — cancel. Match-by-binary save is refused until the
   Lua hook is running.
