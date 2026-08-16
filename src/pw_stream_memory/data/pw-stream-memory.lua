@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: MIT
 -- Apply Match-by-binary overrides after WirePlumber's node/restore-stream.
--- Reads Wp.State "pw-stream-memory" (the TUI mirrors overrides.json there).
+-- Reads Wp.State "pw-stream-memory" (the TUI mirrors config.json restore rows there).
 -- Sets default metadata pw-stream-memory.hook = loaded while this script runs.
 
 log = Log.open_topic ("pw-stream-memory")

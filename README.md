@@ -88,6 +88,7 @@ Closed streams are oldest-first at the top; active streams stay at the bottom.
 - Subscribes to Pulse sink-input changes and polls `pactl list sink-inputs`
 - Records start/end time, label, mute, corked, volume, sink, and properties
 - Reloads closed rows from JSON on the next launch
+- Drops closed rows older than 24 hours (`PW_STREAM_MEMORY_PURGE_TIME` hours; `0` keeps them)
 
 ### Editor (Enter)
 
@@ -143,7 +144,7 @@ That copies:
 
 The tool does not restart WirePlumber. After you restart it, the editor shows
 **Lua hook: running**. Saving Match-by-binary writes
-`~/.local/state/pw-stream-memory/overrides.json` and a WirePlumber State
+`~/.local/state/pw-stream-memory/config.json` and a WirePlumber State
 mirror the Lua hook reads. The hook runs after native Chromium restore and
 overlays volume, mute, and sink. Short sounds may flash the Chromium volume
 for one buffer.
@@ -162,14 +163,16 @@ When an identity has debounce on and a **new** stream appears:
 After that it waits for the PipeWire node to go idle/suspended, then `running`
 (or uncork) to start the cycle again. Debounce only runs while this UI is open.
 
+Closed-stream history older than `PW_STREAM_MEMORY_PURGE_TIME` hours (default 24)
+is dropped on load and save. Set the env var to `0` to keep history.
+
 ## Files
 
 | Path | What |
 |---|---|
 | `~/.local/state/pw-stream-memory/closed-streams.json` | closed-stream history |
-| `~/.local/state/pw-stream-memory/debounce.json` | which identities have debounce |
-| `~/.local/state/pw-stream-memory/overrides.json` | Lua Match-by-binary sidecar |
-| `~/.local/state/wireplumber/pw-stream-memory` | Wp.State copy of the sidecar, read by the Lua hook |
+| `~/.local/state/pw-stream-memory/config.json` | identities: Match-by-binary restore and debounce |
+| `~/.local/state/wireplumber/pw-stream-memory` | Wp.State copy of binary restore, read by the Lua hook |
 | `default` metadata key `pw-stream-memory.hook` | live marker that the Lua hook is loaded |
 | `~/.local/share/wireplumber/scripts/pw-stream-memory.lua` | optional Lua hook (after `--install-lua-hook`) |
 | `~/.config/wireplumber/wireplumber.conf.d/99-pw-stream-memory.conf` | optional WirePlumber drop-in |

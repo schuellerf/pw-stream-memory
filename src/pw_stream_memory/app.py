@@ -30,7 +30,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Any
@@ -48,10 +48,11 @@ WP_RESTORE_KEYS = (
 )
 HISTORY_VERSION = 2
 SAVE_STEPS = 4
-DEBOUNCE_VERSION = 1
-OVERRIDES_VERSION = 1
+CONFIG_VERSION = 1
 DEFAULT_DEBOUNCE_ON_MS = 500.0
 DEFAULT_DEBOUNCE_OFF_S = 30.0
+DEFAULT_PURGE_HOURS = 24.0
+RESTORE_FIELDS = ("mute", "volume", "channelVolumes", "channelMap", "target")
 BINARY_PROP = "application.process.binary"
 LUA_HOOK_SCRIPT = "pw-stream-memory.lua"
 LUA_HOOK_CONF = "99-pw-stream-memory.conf"
@@ -122,12 +123,8 @@ def default_stream_properties_path() -> Path:
     return xdg_state_root() / "wireplumber" / "stream-properties"
 
 
-def default_debounce_path() -> Path:
-    return _app_state_file("debounce.json")
-
-
-def default_overrides_path() -> Path:
-    return _app_state_file("overrides.json")
+def default_config_path() -> Path:
+    return _app_state_file("config.json")
 
 
 def wireplumber_sidecar_state_path() -> Path:
@@ -146,6 +143,10 @@ def debounce_on_ms() -> float:
 
 def debounce_off_s() -> float:
     return _env_float("PW_STREAM_MEMORY_DEBOUNCE_OFF", default=DEFAULT_DEBOUNCE_OFF_S)
+
+
+def purge_hours() -> float:
+    return _env_float("PW_STREAM_MEMORY_PURGE_TIME", default=DEFAULT_PURGE_HOURS)
 
 
 def _env_float(*names: str, default: float) -> float:
@@ -600,14 +601,14 @@ def lua_hook_messages(info: LuaHookInfo) -> tuple[str, str]:
     )
 
 
-def load_overrides(path: Path | None = None) -> list[dict[str, Any]]:
-    target = path or default_overrides_path()
+def load_config(path: Path | None = None) -> list[dict[str, Any]]:
+    target = path or default_config_path()
     if not target.is_file():
         return []
     with target.open(encoding="utf-8") as fh:
         data = json.load(fh)
     if isinstance(data, dict):
-        items = data.get("overrides") or []
+        items = data.get("identities") or []
     elif isinstance(data, list):
         items = data
     else:
@@ -615,14 +616,37 @@ def load_overrides(path: Path | None = None) -> list[dict[str, Any]]:
     return [item for item in items if isinstance(item, dict)]
 
 
-def save_overrides(items: list[dict[str, Any]]) -> None:
-    payload = {"version": OVERRIDES_VERSION, "overrides": items}
-    atomic_write_text(
-        default_overrides_path(),
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-    )
-    # JSON for the TUI; Wp.State copy for the Lua hook.
-    compact = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+def identity_has_restore(item: dict[str, Any]) -> bool:
+    if item.get("prop") != BINARY_PROP:
+        return False
+    return any(key in item for key in RESTORE_FIELDS)
+
+
+def identity_keep(item: dict[str, Any]) -> bool:
+    return bool(item.get("debounce")) or identity_has_restore(item)
+
+
+def binary_restore_payload(item: dict[str, Any]) -> dict[str, Any] | None:
+    if not identity_has_restore(item):
+        return None
+    payload: dict[str, Any] = {}
+    for key in ("prop", "value", "media_class", *RESTORE_FIELDS):
+        if key in item:
+            payload[key] = item[key]
+    return payload
+
+
+def save_config(path: Path, items: list[dict[str, Any]]) -> None:
+    kept = [item for item in items if identity_keep(item)]
+    payload = {"version": CONFIG_VERSION, "identities": kept}
+    atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    overrides: list[dict[str, Any]] = []
+    for item in kept:
+        ov = binary_restore_payload(item)
+        if ov is not None:
+            overrides.append(ov)
+    wp_payload = {"version": CONFIG_VERSION, "overrides": overrides}
+    compact = json.dumps(wp_payload, ensure_ascii=False, separators=(",", ":"))
     atomic_write_text(
         wireplumber_sidecar_state_path(),
         f"[{WP_SIDECAR_STATE_NAME}]\noverrides={compact}\n",
@@ -634,18 +658,37 @@ def override_media_class(item: dict[str, Any]) -> str | None:
     return want if isinstance(want, str) and want else None
 
 
+def identity_matches_binary(
+    item: dict[str, Any],
+    *,
+    prop: str,
+    value: str,
+    klass: str,
+) -> bool:
+    if item.get("prop") != prop or item.get("value") != value:
+        return False
+    want = override_media_class(item)
+    if want and klass and want != klass:
+        return False
+    return True
+
+
 def find_binary_override(
     props: dict[str, str],
     *,
     value: str | None = None,
-    overrides: list[dict[str, Any]] | None = None,
+    config_path: Path | None = None,
+    identities: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     binary = value if value is not None else props.get(BINARY_PROP)
     if not binary:
         return None
     klass = media_class_key(props)
     raw = props.get("media.class") or ""
-    for item in overrides if overrides is not None else load_overrides():
+    rows = identities if identities is not None else load_config(config_path)
+    for item in rows:
+        if not identity_has_restore(item):
+            continue
         if item.get("prop") != BINARY_PROP or item.get("value") != binary:
             continue
         want = override_media_class(item)
@@ -668,49 +711,74 @@ def sidecar_restore_values(result: EditorResult, rec: StreamRecord) -> dict[str,
     }
 
 
-def upsert_binary_override(rec: StreamRecord, result: EditorResult) -> None:
-    values = sidecar_restore_values(result, rec)
-    klass = media_class_key(rec.properties)
-    entry = {
-        "prop": BINARY_PROP,
-        "value": result.value,
-        "media_class": klass,
-        **values,
-    }
+def _strip_restore_fields(item: dict[str, Any]) -> dict[str, Any]:
+    return {key: val for key, val in item.items() if key not in RESTORE_FIELDS}
+
+
+def upsert_identity(
+    path: Path,
+    rec: StreamRecord,
+    result: EditorResult,
+    *,
+    binary_restore: bool,
+) -> None:
+    items = load_config(path)
+    klass = media_class_key(rec.properties) if result.prop == BINARY_PROP else ""
+    existing: dict[str, Any] | None = None
     kept: list[dict[str, Any]] = []
-    for item in load_overrides():
-        if (
-            item.get("prop") == BINARY_PROP
-            and item.get("value") == result.value
-            and (override_media_class(item) in (None, klass))
+    for item in items:
+        if item.get("key") == result.key:
+            existing = item
+            continue
+        if binary_restore and identity_matches_binary(
+            item, prop=result.prop, value=result.value, klass=klass
         ):
+            existing = item
             continue
         kept.append(item)
-    kept.append(entry)
-    save_overrides(kept)
+    entry = dict(existing or {})
+    entry["key"] = result.key
+    entry["prop"] = result.prop
+    entry["value"] = result.value
+    if result.debounce:
+        entry["debounce"] = True
+    else:
+        entry.pop("debounce", None)
+    if binary_restore:
+        if klass:
+            entry["media_class"] = klass
+        entry.update(sidecar_restore_values(result, rec))
+    if identity_keep(entry):
+        kept.append(entry)
+    save_config(path, kept)
 
 
-def delete_binary_override(result: EditorResult) -> bool:
+def delete_binary_override(result: EditorResult, path: Path) -> bool:
     klass = result.key.split(":", 1)[0] if ":" in result.key else ""
     kept: list[dict[str, Any]] = []
     found = False
-    for item in load_overrides():
-        if item.get("prop") == result.prop and item.get("value") == result.value:
-            want = override_media_class(item)
-            if want and klass and want != klass:
+    for item in load_config(path):
+        if item.get("key") == result.key or identity_matches_binary(
+            item, prop=result.prop, value=result.value, klass=klass
+        ):
+            if not identity_has_restore(item):
                 kept.append(item)
                 continue
             found = True
+            leftover = _strip_restore_fields(item)
+            leftover.pop("media_class", None)
+            if identity_keep(leftover):
+                kept.append(leftover)
             continue
         kept.append(item)
     if not found:
         return False
-    save_overrides(kept)
+    save_config(path, kept)
     return True
 
 
-def stored_sidecar_target(props: dict[str, str], value: str) -> str | None:
-    ov = find_binary_override(props, value=value)
+def stored_sidecar_target(props: dict[str, str], value: str, path: Path) -> str | None:
+    ov = find_binary_override(props, value=value, config_path=path)
     if not ov:
         return None
     target = ov.get("target")
@@ -719,42 +787,15 @@ def stored_sidecar_target(props: dict[str, str], value: str) -> str | None:
     return None
 
 
-def load_debounce_entries(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    with path.open(encoding="utf-8") as fh:
-        data = json.load(fh)
-    if isinstance(data, dict):
-        items = data.get("entries") or []
-    elif isinstance(data, list):
-        items = data
-    else:
-        return []
-    return [item for item in items if isinstance(item, dict)]
-
-
-def upsert_debounce(path: Path, entry: dict[str, Any]) -> None:
-    items = load_debounce_entries(path)
-    key = entry.get("key")
-    kept: list[dict[str, Any]] = []
-    for item in items:
-        if item.get("key") != key:
-            kept.append(item)
-    if entry.get("enabled"):
-        kept.append(entry)
-    payload = {"version": DEBOUNCE_VERSION, "entries": kept}
-    atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
-
-
 def debounce_enabled_for(path: Path, key: str) -> bool:
-    for item in load_debounce_entries(path):
-        if item.get("key") == key and item.get("enabled"):
+    for item in load_config(path):
+        if item.get("key") == key and item.get("debounce"):
             return True
     return False
 
 
 def debounce_entry_matches(entry: dict[str, Any], props: dict[str, str]) -> bool:
-    if not entry.get("enabled"):
+    if not entry.get("debounce"):
         return False
     prop = entry.get("prop")
     value = entry.get("value")
@@ -849,8 +890,20 @@ def load_closed_records(path: Path) -> list[StreamRecord]:
     return records
 
 
+def purge_closed_records(records: list[StreamRecord]) -> list[StreamRecord]:
+    hours = purge_hours()
+    if hours <= 0:
+        return records
+    cutoff = now_iso_dt() - timedelta(hours=hours)
+    kept: list[StreamRecord] = []
+    for rec in records:
+        if rec.end is None or rec.end >= cutoff:
+            kept.append(rec)
+    return kept
+
+
 def save_closed_records(path: Path, records: list[StreamRecord]) -> None:
-    closed = [record_to_json(r) for r in records if r.end is not None]
+    closed = [record_to_json(r) for r in purge_closed_records(records) if r.end is not None]
     payload = {"version": HISTORY_VERSION, "records": closed}
     atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 
@@ -1056,7 +1109,7 @@ class DebounceEngine:
 
     def reload(self) -> None:
         try:
-            entries = load_debounce_entries(self.config_path)
+            entries = [item for item in load_config(self.config_path) if item.get("debounce")]
         except (OSError, json.JSONDecodeError, ValueError):
             entries = []
         with self._lock:
@@ -1284,10 +1337,11 @@ class PulseMonitor:
             with self._lock:
                 self._history_error = f"history load failed: {exc}"
             return
+        purged = purge_closed_records(loaded)
         with self._lock:
-            self._records = loaded
-            self._serial = max((r.serial for r in loaded), default=0)
-            self._dirty = False
+            self._records = purged
+            self._serial = max((r.serial for r in purged), default=0)
+            self._dirty = len(purged) != len(loaded)
 
     def _persist(self) -> None:
         with self._lock:
@@ -1505,7 +1559,7 @@ def save_stream_settings(
     result: EditorResult,
     *,
     stream_properties_path: Path,
-    debounce_path: Path,
+    config_path: Path,
     debounce: DebounceEngine | None = None,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> str:
@@ -1523,7 +1577,7 @@ def save_stream_settings(
     if result.prop == BINARY_PROP:
         if lua_hook_info(force=True).status != "running":
             return "Lua hook is not running; binary identity was not saved"
-        upsert_binary_override(rec, result)
+        upsert_identity(config_path, rec, result, binary_restore=True)
         notes.append("saved Lua sidecar")
         notes.append("no stream-properties reload")
     else:
@@ -1534,15 +1588,7 @@ def save_stream_settings(
         )
         notes.append("saved stream-properties")
         notes.append(reload_note)
-    upsert_debounce(
-        debounce_path,
-        {
-            "key": result.key,
-            "prop": result.prop,
-            "value": result.value,
-            "enabled": result.debounce,
-        },
-    )
+        upsert_identity(config_path, rec, result, binary_restore=False)
     if result.debounce:
         notes.append("debounce on")
     else:
@@ -1565,10 +1611,11 @@ def delete_stream_settings(
     result: EditorResult,
     *,
     stream_properties_path: Path,
+    config_path: Path,
     on_progress: Callable[[int, int, str], None] | None = None,
 ) -> str:
     if result.prop == BINARY_PROP:
-        if delete_binary_override(result):
+        if delete_binary_override(result, config_path):
             return f"deleted Lua sidecar override for {result.key}"
         return "no Lua sidecar override for this key"
     existed = stream_properties_entry(stream_properties_path, result.key) is not None
@@ -1633,7 +1680,7 @@ def run_editor(
     error_attr: int,
     field_attr: int,
     stream_properties_path: Path,
-    debounce_path: Path,
+    config_path: Path,
 ) -> EditorResult | None:
     h, w = stdscr.getmaxyx()
     if not rec.properties:
@@ -1675,7 +1722,7 @@ def run_editor(
     sinks = list_sinks()
     sink_names: list[str | None] = [None, *[name for name, _desc in sinks]]
     ident_idx = next((i for i, item in enumerate(choices) if item[3]), 0)
-    sidecar = find_binary_override(rec.properties)
+    sidecar = find_binary_override(rec.properties, config_path=config_path)
     if sidecar:
         wanted = str(sidecar.get("value") or "")
         for i, (name, value, _full, _default) in enumerate(choices):
@@ -1688,7 +1735,7 @@ def run_editor(
     def sink_idx_for_identity(ident_i: int) -> int:
         prop_i, value_i, key_i, _default = choices[ident_i]
         if prop_i == BINARY_PROP:
-            target = stored_sidecar_target(rec.properties, value_i)
+            target = stored_sidecar_target(rec.properties, value_i, config_path)
         else:
             target = stored_restore_target(stream_properties_path, key_i)
         if not target:
@@ -1699,7 +1746,7 @@ def run_editor(
 
     sink_idx = sink_idx_for_identity(ident_idx)
     sink_touched = False
-    debounce = debounce_enabled_for(debounce_path, choices[ident_idx][2])
+    debounce = debounce_enabled_for(config_path, choices[ident_idx][2])
     debounce_touched = False
     field_i = 0
     field_count = 5
@@ -1754,7 +1801,7 @@ def run_editor(
         if prop == BINARY_PROP:
             lua_info = lua_hook_info()
             status_line, hint_line = lua_hook_messages(lua_info)
-            sidecar_obj = find_binary_override(rec.properties, value=value)
+            sidecar_obj = find_binary_override(rec.properties, value=value, config_path=config_path)
             restore_line = f"Sidecar restore: {describe_wp_entry(sidecar_obj)}"
             _add(stdscr, 8, 1, f"Lua key: {full_key}", w - 2, meta_attr)
             _add(stdscr, 9, 1, restore_line, w - 2, meta_attr)
@@ -1800,7 +1847,7 @@ def run_editor(
                 if not sink_touched:
                     sink_idx = sink_idx_for_identity(ident_idx)
                 if not debounce_touched:
-                    debounce = debounce_enabled_for(debounce_path, choices[ident_idx][2])
+                    debounce = debounce_enabled_for(config_path, choices[ident_idx][2])
             elif field_i == 1:
                 percent_buf = ""
                 percent = max(0.0, percent - 5.0)
@@ -1818,7 +1865,7 @@ def run_editor(
                 if not sink_touched:
                     sink_idx = sink_idx_for_identity(ident_idx)
                 if not debounce_touched:
-                    debounce = debounce_enabled_for(debounce_path, choices[ident_idx][2])
+                    debounce = debounce_enabled_for(config_path, choices[ident_idx][2])
             elif field_i == 1:
                 percent_buf = ""
                 percent = min(150.0, percent + 5.0)
@@ -1838,7 +1885,7 @@ def run_editor(
                 debounce_touched = True
         elif key in (ord("d"), ord("D"), curses.KEY_DC):
             if prop == BINARY_PROP:
-                if find_binary_override(rec.properties, value=value) is None:
+                if find_binary_override(rec.properties, value=value, config_path=config_path) is None:
                     message = "No Lua sidecar override for this key"
                     continue
                 if not confirm_delete_restore_entry(
@@ -1914,11 +1961,11 @@ class Tui:
         monitor: PulseMonitor,
         *,
         stream_properties_path: Path,
-        debounce_path: Path,
+        config_path: Path,
     ) -> None:
         self.monitor = monitor
         self.stream_properties_path = stream_properties_path
-        self.debounce_path = debounce_path
+        self.config_path = config_path
         self.follow = True
         self.scroll = 0
         self.selected_serial: int | None = None
@@ -2084,7 +2131,7 @@ class Tui:
                     error_attr=error_attr,
                     field_attr=sel_attr,
                     stream_properties_path=self.stream_properties_path,
-                    debounce_path=self.debounce_path,
+                    config_path=self.config_path,
                 )
                 stdscr.nodelay(True)
                 stdscr.timeout(120)
@@ -2104,6 +2151,7 @@ class Tui:
                         self.status = delete_stream_settings(
                             result,
                             stream_properties_path=self.stream_properties_path,
+                            config_path=self.config_path,
                             on_progress=on_progress,
                         )
                         continue
@@ -2111,7 +2159,7 @@ class Tui:
                         rec,
                         result,
                         stream_properties_path=self.stream_properties_path,
-                        debounce_path=self.debounce_path,
+                        config_path=self.config_path,
                         debounce=self.monitor.debounce,
                         on_progress=on_progress,
                     )
@@ -2203,8 +2251,8 @@ def install_lua_hook() -> int:
     script_dest, conf_dest = lua_hook_install_paths()
     _copy_pkg_data(LUA_HOOK_SCRIPT, script_dest)
     _copy_pkg_data(LUA_HOOK_CONF, conf_dest)
-    if default_overrides_path().is_file():
-        save_overrides(load_overrides())
+    if default_config_path().is_file():
+        save_config(default_config_path(), load_config())
     print("Lua hook files installed.")
     _print_wp_restart_hint()
     return 0
@@ -2261,10 +2309,10 @@ def main(argv: list[str] | None = None) -> int:
         help="WirePlumber stream-properties file (default: %(default)s)",
     )
     parser.add_argument(
-        "--debounce-file",
+        "--config-file",
         type=Path,
-        default=default_debounce_path(),
-        help="JSON file for per-app debounce flags (default: %(default)s)",
+        default=default_config_path(),
+        help="JSON file for identities (binary restore and debounce) (default: %(default)s)",
     )
     parser.add_argument(
         "--install-desktop",
@@ -2298,9 +2346,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     _require_tty()
 
-    debounce_path = args.debounce_file.expanduser()
+    config_path = args.config_file.expanduser()
     stream_properties_path = args.stream_properties.expanduser()
-    debounce = DebounceEngine(debounce_path, stream_properties_path)
+    debounce = DebounceEngine(config_path, stream_properties_path)
     monitor = PulseMonitor(args.history_file.expanduser(), debounce=debounce)
     monitor.start()
 
@@ -2314,7 +2362,7 @@ def main(argv: list[str] | None = None) -> int:
         tui = Tui(
             monitor,
             stream_properties_path=stream_properties_path,
-            debounce_path=debounce_path,
+            config_path=config_path,
         )
         curses.wrapper(tui.run)
     except KeyboardInterrupt:
